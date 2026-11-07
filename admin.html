@@ -633,23 +633,39 @@
       return purgedAndHiddenNames.has(cleanName);
     }
 
+    function deduplicateAccounts(db) {
+      if (!db || typeof db !== 'object') return {};
+      const clean = {};
+      const seen = new Set();
+      const sorted = Object.entries(db).sort((a, b) => (Number(b[1]?.updatedAt) || 0) - (Number(a[1]?.updatedAt) || 0));
+      for (const [key, acc] of sorted) {
+        if (!acc || !acc.username) continue;
+        if (isPurgedOrOwnerAccount(acc.username || key, acc.uid)) continue;
+        const uid = (acc.uid || '').trim().toUpperCase();
+        const email = (acc.email || '').trim().toLowerCase();
+        const user = (acc.username || '').trim().toLowerCase();
+        const dedupeId = uid || email || user;
+        if (seen.has(dedupeId) || (email && seen.has(email)) || (uid && seen.has(uid))) {
+          continue;
+        }
+        if (uid) seen.add(uid);
+        if (email) seen.add(email);
+        seen.add(dedupeId);
+        clean[email || user || key] = acc;
+      }
+      return clean;
+    }
+
     function loadLocalAccountsDB() {
       try {
         const raw = localStorage.getItem(ACCOUNTS_DB_KEY);
         if (!raw) return {};
         const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') return {};
-        let changed = false;
-        for (const [k, acc] of Object.entries(parsed)) {
-          if (!acc || isPurgedOrOwnerAccount(acc.username || k, acc.uid)) {
-            delete parsed[k];
-            changed = true;
-          }
+        const clean = deduplicateAccounts(parsed || {});
+        if (Object.keys(clean).length !== Object.keys(parsed || {}).length) {
+          localStorage.setItem(ACCOUNTS_DB_KEY, JSON.stringify(clean));
         }
-        if (changed) {
-          localStorage.setItem(ACCOUNTS_DB_KEY, JSON.stringify(parsed));
-        }
-        return parsed;
+        return clean;
       } catch (e) {
         return {};
       }
@@ -657,15 +673,10 @@
 
     function saveLocalAccountsDB(db) {
       try {
-        if (db && typeof db === 'object') {
-          for (const [k, acc] of Object.entries(db)) {
-            if (!acc || isPurgedOrOwnerAccount(acc.username || k, acc.uid)) {
-              delete db[k];
-            }
-          }
-        }
-        localStorage.setItem(ACCOUNTS_DB_KEY, JSON.stringify(db || {}));
+        const clean = deduplicateAccounts(db);
+        localStorage.setItem(ACCOUNTS_DB_KEY, JSON.stringify(clean));
         localStorage.setItem('edurush_admin_broadcast_v1', String(Date.now()));
+        return clean;
       } catch (e) {}
     }
 

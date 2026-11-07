@@ -5393,23 +5393,39 @@
         ' às ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     }
 
+    function deduplicateAccountsMap(db) {
+      if (!db || typeof db !== 'object') return {};
+      const clean = {};
+      const seen = new Set();
+      const entries = Object.entries(db).sort((a, b) => (Number(b[1]?.updatedAt) || 0) - (Number(a[1]?.updatedAt) || 0));
+      for (const [key, acc] of entries) {
+        if (!acc || !acc.username) continue;
+        if (isPurgedOrHiddenOwner(acc.username || key, acc.uid)) continue;
+        const uid = (acc.uid || '').trim().toUpperCase();
+        const email = (acc.email || '').trim().toLowerCase();
+        const user = (acc.username || '').trim().toLowerCase();
+        const dedupeKey = uid || email || user;
+        if (seen.has(dedupeKey) || (email && seen.has(email)) || (uid && seen.has(uid))) {
+          continue;
+        }
+        if (uid) seen.add(uid);
+        if (email) seen.add(email);
+        seen.add(dedupeKey);
+        clean[email || user || key] = acc;
+      }
+      return clean;
+    }
+
     function loadAccountsDB() {
       try {
         const raw = localStorage.getItem(ACCOUNTS_DB_KEY);
         if (!raw) return {};
         const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') return {};
-        let changed = false;
-        for (const [k, acc] of Object.entries(parsed)) {
-          if (!acc || isPurgedOrHiddenOwner(acc.username || k, acc.uid)) {
-            delete parsed[k];
-            changed = true;
-          }
+        const clean = deduplicateAccountsMap(parsed || {});
+        if (Object.keys(clean).length !== Object.keys(parsed || {}).length) {
+          localStorage.setItem(ACCOUNTS_DB_KEY, JSON.stringify(clean));
         }
-        if (changed) {
-          localStorage.setItem(ACCOUNTS_DB_KEY, JSON.stringify(parsed));
-        }
-        return parsed;
+        return clean;
       } catch (e) {
         return {};
       }
@@ -5417,14 +5433,9 @@
 
     function saveAccountsDB(db) {
       try {
-        if (db && typeof db === 'object') {
-          for (const [k, acc] of Object.entries(db)) {
-            if (!acc || isPurgedOrHiddenOwner(acc.username || k, acc.uid)) {
-              delete db[k];
-            }
-          }
-        }
-        localStorage.setItem(ACCOUNTS_DB_KEY, JSON.stringify(db || {}));
+        const clean = deduplicateAccountsMap(db);
+        localStorage.setItem(ACCOUNTS_DB_KEY, JSON.stringify(clean));
+        return clean;
       } catch (e) {}
     }
 

@@ -97,6 +97,29 @@ function normalizeAccountKey(raw: string): string {
   return (raw || "").trim().toLowerCase();
 }
 
+function deduplicateIndexMap(indexMap: Record<string, CloudAccountRecord>): Record<string, CloudAccountRecord> {
+  const cleanMap: Record<string, CloudAccountRecord> = {};
+  const seenUids = new Set<string>();
+  const seenEmails = new Set<string>();
+
+  const entries = Object.entries(indexMap).sort(
+    (a, b) => (Number(b[1]?.updatedAt) || 0) - (Number(a[1]?.updatedAt) || 0)
+  );
+
+  for (const [k, acc] of entries) {
+    if (!acc || !acc.username) continue;
+    if (isPurgedOrOwnerAccount(acc.username, acc.uid)) continue;
+    const uid = (acc.uid || "").trim().toUpperCase();
+    const email = (acc.email || "").trim().toLowerCase();
+    if (uid && seenUids.has(uid)) continue;
+    if (email && seenEmails.has(email)) continue;
+    if (uid) seenUids.add(uid);
+    if (email) seenEmails.add(email);
+    cleanMap[email || normalizeAccountKey(acc.username) || k] = acc;
+  }
+  return cleanMap;
+}
+
 function snapshotFromAccountRecord(acc: CloudAccountRecord, leaderboard: PlayerLeaderboardEntry[] = []): MasterSnapshot {
   return {
     version: 2,
@@ -226,8 +249,9 @@ export default async (req: Request, _context: Context) => {
     if (req.method === "GET") {
       const uid = url.searchParams.get("uid") || "";
       const email = url.searchParams.get("email") || "";
-      const indexMap =
+      const rawIndex =
         ((await store.get(ACCOUNTS_INDEX_KEY, { type: "json" })) as Record<string, CloudAccountRecord> | null) || {};
+      const indexMap = deduplicateIndexMap(rawIndex);
       const globalLeaderboard =
         ((await store.get(GLOBAL_LEADERBOARD_KEY, { type: "json" })) as PlayerLeaderboardEntry[] | null) || [];
 
@@ -270,8 +294,9 @@ export default async (req: Request, _context: Context) => {
     if (req.method === "POST") {
       const body = await req.json();
       const action = body?.action || "sync";
-      const indexMap =
+      const rawIndex =
         ((await store.get(ACCOUNTS_INDEX_KEY, { type: "json" })) as Record<string, CloudAccountRecord> | null) || {};
+      let indexMap = deduplicateIndexMap(rawIndex);
 
       // ============================================================================
       // 1. LOGIN UNIFICADO POR E-MAIL OU NOME DE USUÁRIO (TABLET, CELULAR E PC)
@@ -412,10 +437,14 @@ export default async (req: Request, _context: Context) => {
           matchHistory: Array.isArray(snap?.matchHistory) ? snap!.matchHistory : [],
         };
 
-        indexMap[emailKey] = newRecord;
-        if (userKey && userKey !== emailKey) {
-          indexMap[userKey] = newRecord;
+        // Remove qualquer entrada anterior duplicada do mesmo UID ou Email
+        for (const [k, oldAcc] of Object.entries(indexMap)) {
+          if (oldAcc && (oldAcc.uid === uid || oldAcc.emailLower === emailKey)) {
+            delete indexMap[k];
+          }
         }
+        indexMap[emailKey] = newRecord;
+        indexMap = deduplicateIndexMap(indexMap);
         await store.setJSON(ACCOUNTS_INDEX_KEY, indexMap);
 
         const playerKey = sanitizeUidKey(uid);
@@ -481,9 +510,8 @@ export default async (req: Request, _context: Context) => {
               }
             }
           }
-          if (changed) {
-            await store.setJSON(ACCOUNTS_INDEX_KEY, indexMap);
-          }
+          indexMap = deduplicateIndexMap(indexMap);
+          await store.setJSON(ACCOUNTS_INDEX_KEY, indexMap);
           const globalLeaderboard = await updateGlobalLeaderboardFromAccounts(store, indexMap);
           return Response.json(
             {
@@ -639,15 +667,29 @@ export default async (req: Request, _context: Context) => {
 
         // 3.5 Excluir uma conta e seu registro do Ranking pelo Painel Admin
         if (action === "admin_delete_account") {
-          const targetQuery = body?.targetKey || body?.uid || body?.email || body?.username || "";
+          const targetQuery = (body?.targetKey || body?.uid || body?.email || body?.username || "").trim().toLowerCase();
           const found = findAccountInIndex(indexMap, targetQuery);
           const delNameLower = (found?.acc?.username || body?.username || targetQuery).trim().toLowerCase();
-          const delUid = found?.acc?.uid || body?.uid || "";
+          const delUid = (found?.acc?.uid || body?.uid || "").trim().toUpperCase();
+          const delEmail = (found?.acc?.email || "").trim().toLowerCase();
 
-          if (found) {
-            delete indexMap[found.key];
-            await store.setJSON(ACCOUNTS_INDEX_KEY, indexMap);
+          for (const [k, acc] of Object.entries(indexMap)) {
+            if (!acc) continue;
+            const kLower = k.toLowerCase();
+            const aUid = (acc.uid || "").trim().toUpperCase();
+            const aEmail = (acc.email || "").trim().toLowerCase();
+            const aUser = (acc.username || "").trim().toLowerCase();
+            if (
+              kLower === targetQuery ||
+              (delUid && aUid === delUid) ||
+              (delEmail && aEmail === delEmail) ||
+              (delNameLower && aUser === delNameLower)
+            ) {
+              delete indexMap[k];
+            }
           }
+          indexMap = deduplicateIndexMap(indexMap);
+          await store.setJSON(ACCOUNTS_INDEX_KEY, indexMap);
 
           const currentGlobal =
             ((await store.get(GLOBAL_LEADERBOARD_KEY, { type: "json" })) as PlayerLeaderboardEntry[] | null) || [];
