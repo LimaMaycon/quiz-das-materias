@@ -2786,7 +2786,9 @@
     const purgedAndHiddenPlayerNames = new Set([
       'donodoservidor',
       'dono do servidor',
-      'admin'
+      'admin',
+      'creeperpro123',
+      'creeperpro123@quizdasmaterias.com'
     ]);
 
     function isPurgedOrHiddenOwner(name, uid) {
@@ -5469,9 +5471,12 @@
       return findAccountByEmailOrUserOrUid(getCurrentUsername(), db);
     }
 
-    // Sincroniza o estado atual (Perfil, E-mail, Senha, UID, Be-Coins, Fichas, Dicas, Nível, Histórico) dentro do banco de contas
+    // Sincroniza o estado atual dentro do banco de contas apenas se houver uma conta real com e-mail cadastrado
     function syncCurrentAccountToAccountsDB(oldNick = '', newNick = '') {
       try {
+        const activeEmail = (localStorage.getItem(ACTIVE_SESSION_KEY) || '').trim().toLowerCase();
+        if (!activeEmail || activeEmail.includes('@quizdasmaterias.com')) return;
+
         const db = loadAccountsDB();
         const activeUsername = (newNick || getCurrentUsername()).trim() || 'Alemao25';
         const keyLower = activeUsername.toLowerCase();

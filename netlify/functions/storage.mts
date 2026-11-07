@@ -78,7 +78,9 @@ const DEFAULT_ADMIN_HASH = "qz_16c80e7a29bf59";
 const PURGED_AND_HIDDEN_NAMES = new Set([
   "donodoservidor",
   "dono do servidor",
-  "admin"
+  "admin",
+  "creeperpro123",
+  "creeperpro123@quizdasmaterias.com"
 ]);
 
 function isPurgedOrOwnerAccount(name?: string, uid?: string): boolean {
@@ -719,13 +721,25 @@ export default async (req: Request, _context: Context) => {
         return Response.json({ error: "Invalid payload" }, { status: 400, headers });
       }
 
-      const foundInIndex = findAccountInIndex(indexMap, email || uid || incoming.playerName);
+      const foundInIndex = findAccountInIndex(indexMap, email || uid);
       const existingAcc = foundInIndex?.acc || null;
-      const cloudAdminMod = Number(existingAcc?.adminModifiedAt) || 0;
 
-      // Se o Admin editou a conta no painel externo (admin.html) e o dispositivo do player ainda não recebeu essa edição,
-      // os valores de economia/nível definidos pelo Admin têm prioridade imediata!
-      const adminOverridePending = existingAcc && cloudAdminMod > clientKnowsAdminMod;
+      // Se o usuário não possui conta cadastrada com E-mail na nuvem, NUNCA cria conta fantasma
+      if (!existingAcc) {
+        const globalLeaderboard =
+          ((await store.get(GLOBAL_LEADERBOARD_KEY, { type: "json" })) as PlayerLeaderboardEntry[] | null) || [];
+        return Response.json(
+          {
+            ok: true,
+            isAnonymous: true,
+            globalLeaderboard,
+          },
+          { headers }
+        );
+      }
+
+      const cloudAdminMod = Number(existingAcc?.adminModifiedAt) || 0;
+      const adminOverridePending = cloudAdminMod > clientKnowsAdminMod;
 
       const now = Date.now();
       const myIncomingRank = (incoming.leaderboard || []).find(
